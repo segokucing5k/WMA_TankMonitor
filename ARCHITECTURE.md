@@ -853,8 +853,6 @@ Because the final physical sensor type may vary, the payload must describe
 the measurement explicitly.
 
 Example:
-
-```json
 {
   "device_id": "DEV-001",
   "sensor_id": "SNS-001",
@@ -1015,7 +1013,6 @@ Recommended fields:
 
 Example:
 
-```json
 {
   "message_id": "DEV-001-18421",
   "device_id": "DEV-001",

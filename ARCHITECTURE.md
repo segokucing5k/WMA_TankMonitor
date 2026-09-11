@@ -635,3 +635,564 @@ Each telemetry message should include a device-generated message identity (`sequ
 }
 ```
 The backend must detect duplicate telemetry and avoid duplicate historical readings, alarm evaluation, and realtime events.
+
+---
+
+## 17. REST API Contract
+
+**Base path:** `/api/v1`
+
+REST API is used for authentication, configuration, historical queries, alarm actions, and user management.
+Realtime tank updates are delivered using WebSocket, not polling.
+
+### Authentication
+
+#### `POST /api/v1/auth/login`
+
+**Request:**
+```json
+{
+  "username": "operator01",
+  "password": "temporary-or-user-password"
+}
+```
+
+**Response:**
+```json
+{
+  "user": {
+    "id": "uuid",
+    "full_name": "Operator 01",
+    "username": "operator01",
+    "role": "OPERATOR",
+    "must_change_password": false
+  },
+  "access_token": "..."
+}
+```
+
+#### `POST /api/v1/auth/change-password`
+
+Used for both normal password changes and forced temporary-password replacement.
+
+**Request:**
+```json
+{
+  "current_password": "old-password",
+  "new_password": "new-password"
+}
+```
+
+#### `POST /api/v1/auth/refresh`
+Used to obtain a new access token.
+
+#### `POST /api/v1/auth/logout`
+Invalidates the current authenticated session/refresh token.
+
+---
+
+### Dashboard / Tank Monitoring
+
+#### `GET /api/v1/tanks`
+
+Returns the tanks accessible to the authenticated user together with their current state. The dashboard primarily uses this endpoint for initial page loading.
+
+**Example Response:**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "tank_code": "TANK-001",
+      "name": "Tank A",
+      "location": "Area 1",
+      "capacity_liter": 10000,
+      "current_state": {
+        "volume_liter": 7842,
+        "level_percentage": 78.4,
+        "fluid_height_mm": 1850,
+        "tank_status": "NORMAL",
+        "sensor_status": "ONLINE",
+        "last_received_at": "2026-09-11T14:00:00+07:00"
+      }
+    }
+  ]
+}
+```
+
+#### `GET /api/v1/tanks/:tankId`
+Returns tank metadata and configuration needed for Tank Detail.
+
+#### `GET /api/v1/tanks/:tankId/current`
+Returns only the current runtime state of the selected tank.
+
+---
+
+### Historical Telemetry
+
+#### `GET /api/v1/tanks/:tankId/history`
+
+**Supported query parameters:**
+- `start`
+- `end`
+- `page`
+- `limit`
+- `metric`
+
+**Example:** `/api/v1/tanks/:tankId/history?start=...&end=...&page=1&limit=100`
+
+**Response includes:**
+- timestamp
+- raw sensor measurement
+- fluid height
+- volume
+- level percentage
+
+*Note: History responses must be paginated for table data. Chart data may use a separate aggregation/downsampling strategy when large ranges are requested.*
+
+---
+
+### Alarm API
+
+#### `GET /api/v1/alarms`
+
+Used for both Active Alarms and Alarm History.
+
+**Supported filters:**
+- `status`
+- `severity`
+- `type`
+- `tank_id`
+- `start`
+- `end`
+- `page`
+- `limit`
+
+#### `POST /api/v1/alarms/:alarmId/acknowledge`
+
+Acknowledges an active alarm.
+- **Allowed roles:** `SUPERVISOR`, `ADMIN`
+- The authenticated user is stored automatically as `acknowledged_by`.
+- The client must not provide the acknowledging user ID manually.
+
+---
+
+### Tank Configuration
+
+#### `POST /api/v1/tanks`
+Creates a new tank.
+- **Allowed role:** `ADMIN`
+
+#### `PATCH /api/v1/tanks/:tankId`
+Updates tank metadata.
+- **Allowed role:** `ADMIN`
+
+#### `PATCH /api/v1/tanks/:tankId/geometry`
+Updates geometry configuration.
+- **Allowed role:** `ADMIN`
+
+---
+
+### Sensor Configuration
+
+#### `POST /api/v1/tanks/:tankId/sensor`
+Assigns/configures the level sensor for a tank.
+- **Allowed role:** `ADMIN`
+
+#### `PATCH /api/v1/tanks/:tankId/sensor`
+Updates sensor configuration.
+- **Allowed role:** `ADMIN`
+
+---
+
+### Alarm Threshold Configuration
+
+#### `GET /api/v1/tanks/:tankId/thresholds`
+Returns alarm threshold configuration.
+
+#### `PUT /api/v1/tanks/:tankId/thresholds`
+Creates or replaces the complete threshold configuration. A full replacement is preferred here because the four thresholds form one validated configuration set.
+- **Allowed role:** `ADMIN`
+
+---
+
+### User Management
+
+#### `GET /api/v1/users`
+Returns user-management data. Password hashes must never be returned.
+- **Allowed role:** `ADMIN`
+
+#### `POST /api/v1/users`
+Creates a new user. The backend generates a temporary password, which may be included in the response once. The temporary password must never be stored in plaintext.
+- **Allowed role:** `ADMIN`
+
+**Request Example:**
+```json
+{
+  "full_name": "Operator 02",
+  "username": "operator02",
+  "role": "OPERATOR"
+}
+```
+
+#### `PATCH /api/v1/users/:userId`
+Used for full name changes, role changes, and account status changes.
+- **Allowed role:** `ADMIN`
+
+#### `POST /api/v1/users/:userId/reset-password`
+Generates a new temporary password and sets `must_change_password = true`. The permanent user password cannot be viewed by administrators.
+- **Allowed role:** `ADMIN`
+
+---
+
+### Export
+
+#### `GET /api/v1/tanks/:tankId/history/export`
+
+Export is intended for historical monitoring data.
+- **Allowed roles:** `SUPERVISOR`, `ADMIN`
+- **Supported formats:** `CSV`, `XLSX`
+
+**Example:** `/api/v1/tanks/:tankId/history/export?start=...&end=...&format=csv`
+
+---
+
+### Common API Rules
+
+1. All endpoints except login and token refresh require authentication.
+2. Authorization is enforced by the backend. The frontend may hide unavailable features for user experience, but frontend visibility is not a security mechanism.
+3. All timestamps use **ISO 8601** format.
+4. API errors use a consistent response format.
+
+**Error Response Example:**
+```json
+{
+  "statusCode": 400,
+  "code": "INVALID_THRESHOLD_CONFIGURATION",
+  "message": "critical_low must be lower than low_warning"
+}
+```
+
+**Pagination Response Example:**
+```json
+{
+  "data": [],
+  "meta": {
+    "page": 1,
+    "limit": 50,
+    "total": 420,
+    "total_pages": 9
+  }
+}
+```
+
+---
+
+## 18. WebSocket Contract
+
+WebSocket is used to deliver realtime state changes from the NestJS backend to authenticated frontend clients.
+
+WebSocket complements REST API communication. REST is used for initial data loading and standard CRUD operations. WebSocket is used only for subsequent realtime changes.
+
+### Realtime Events
+
+The Version 1 backend supports the following events:
+- `tank.updated`
+- `alarm.created`
+- `alarm.updated`
+- `sensor.status_changed`
+
+#### `tank.updated`
+Emitted after valid telemetry has been processed and the current tank state has been updated. The frontend uses this event to update tank information without reloading the page.
+
+**Example Payload:**
+```json
+{
+  "tank_id": "uuid",
+  "tank_code": "TANK-001",
+  "volume_liter": 7842,
+  "fluid_height_mm": 1850,
+  "level_percentage": 78.4,
+  "tank_status": "NORMAL",
+  "sensor_status": "ONLINE",
+  "updated_at": "2026-09-11T14:00:00+07:00"
+}
+```
+
+#### `alarm.created`
+Emitted when a new alarm condition is created.
+
+**Example Payload:**
+```json
+{
+  "id": "uuid",
+  "tank_id": "uuid",
+  "tank_code": "TANK-001",
+  "type": "HIGH_WARNING",
+  "severity": "WARNING",
+  "status": "ACTIVE",
+  "trigger_value_pct": 82.4,
+  "triggered_at": "2026-09-11T14:01:00+07:00"
+}
+```
+
+#### `alarm.updated`
+Emitted when an existing alarm changes state. Examples include `ACTIVE → ACKNOWLEDGED`, `ACTIVE → RESOLVED`, `ACKNOWLEDGED → RESOLVED`.
+
+**Example Payload:**
+```json
+{
+  "id": "uuid",
+  "tank_id": "uuid",
+  "type": "HIGH_WARNING",
+  "status": "ACKNOWLEDGED",
+  "acknowledged_at": "2026-09-11T14:05:00+07:00"
+}
+```
+
+#### `sensor.status_changed`
+Emitted only when sensor connectivity state changes. The event should not be repeatedly emitted while the sensor remains in the same state.
+
+**Example Payload:**
+```json
+{
+  "tank_id": "uuid",
+  "sensor_id": "uuid",
+  "sensor_status": "OFFLINE",
+  "last_received_at": "2026-09-11T14:00:00+07:00",
+  "changed_at": "2026-09-11T14:02:00+07:00"
+}
+```
+
+### WebSocket Rules
+- WebSocket connections require authentication.
+- The backend remains authoritative for all realtime state.
+- The frontend must not calculate alarm state based solely on incoming tank measurements.
+- WebSocket events are notifications of backend state changes, not a replacement for persistent database storage.
+- If a WebSocket connection is lost, the frontend must reconnect and retrieve current state through REST before continuing realtime updates.
+
+---
+
+## 19. Role-Based Access Control
+
+Version 1 defines three roles:
+- `OPERATOR`
+- `SUPERVISOR`
+- `ADMIN`
+
+Permissions are enforced by the NestJS backend. Frontend route visibility is used only for user experience and must never be considered sufficient authorization.
+
+### Permission Matrix
+
+| Capability | Operator | Supervisor | Admin |
+|---|:---:|:---:|:---:|
+| Login | Yes | Yes | Yes |
+| View Dashboard | Yes | Yes | Yes |
+| View Tank Detail | Yes | Yes | Yes |
+| View History | Yes | Yes | Yes |
+| View Active Alarms | Yes | Yes | Yes |
+| View Alarm History | Yes | Yes | Yes |
+| Acknowledge Alarm | No | Yes | Yes |
+| Export History | No | Yes | Yes |
+| Configure Tank | No | No | Yes |
+| Configure Geometry | No | No | Yes |
+| Configure Sensor | No | No | Yes |
+| Configure Threshold | No | No | Yes |
+| View Users | No | No | Yes |
+| Create User | No | No | Yes |
+| Edit User | No | No | Yes |
+| Disable/Enable User | No | No | Yes |
+| Reset User Password | No | No | Yes |
+
+### Role Descriptions
+
+#### Operator
+Operator is a monitoring role.
+- **Can:** monitor tank conditions, view tank details, view historical data, view alarms.
+- **Cannot:** modify system configuration or acknowledge alarms.
+
+#### Supervisor
+Supervisor includes all Operator permissions.
+- **Can additionally:** acknowledge alarms, export historical data.
+- **Cannot:** modify system configuration or manage users.
+
+#### Admin
+Admin has full Version 1 application access.
+- **Can additionally:** configure tanks, configure tank geometry, configure sensors, configure alarm thresholds, create and manage users, reset user passwords.
+- **Cannot:** view user passwords.
+
+---
+
+## 20. Authentication and Password Rules
+
+Public registration is not available. Users are created by an Administrator.
+
+When an Administrator creates a user:
+1. The backend generates a temporary password.
+2. The temporary password may be displayed once to the Administrator.
+3. Only the password hash is stored.
+4. `must_change_password` is set to `true`.
+
+After login using a temporary password, the user must change the password before accessing normal application functionality.
+
+- Passwords are hashed using **Argon2id**.
+- Permanent passwords are never stored in plaintext, returned by the API, or visible to administrators.
+- If a user forgets a password, an Administrator performs a password reset (backend generates a new temporary password and sets `must_change_password = true`).
+- Disabled/inactive users cannot authenticate.
+- Authentication endpoints must use login rate limiting.
+
+---
+
+## 21. Project Structure
+
+The repository uses the following high-level structure:
+
+```text
+wma_tank/
+├── backend/
+│   ├── src/
+│   │   ├── auth/
+│   │   ├── users/
+│   │   ├── tanks/
+│   │   ├── sensors/
+│   │   ├── telemetry/
+│   │   ├── alarms/
+│   │   ├── history/
+│   │   ├── websocket/
+│   │   ├── audit/
+│   │   ├── database/
+│   │   ├── config/
+│   │   └── common/
+│   └── prisma/
+│
+├── frontend/
+│
+├── mosquitto/
+│   ├── config/
+│   ├── data/
+│   └── log/
+│
+├── nginx/
+│
+├── docker-compose.yml
+├── .env
+├── .env.example
+├── ARCHITECTURE.md
+└── README.md
+```
+
+- The backend follows a modular monolith architecture.
+- **Controllers** handle transport-level concerns.
+- **Services** contain application and business logic.
+- **Prisma** provides database access.
+- *Business-critical calculations must not be implemented directly inside controllers.*
+
+---
+
+## 22. Architecture Freeze Checklist
+
+The following Version 1 architectural decisions are frozen:
+
+- [x] Monitoring-only system
+- [x] ESP32 sensor acquisition
+- [x] MQTT telemetry transport
+- [x] Eclipse Mosquitto broker
+- [x] NestJS modular monolith backend
+- [x] PostgreSQL database
+- [x] Prisma ORM
+- [x] Next.js frontend
+- [x] REST API for queries and commands
+- [x] WebSocket for realtime state changes
+- [x] One level sensor per tank in Version 1
+- [x] Flexible tank geometry architecture
+- [x] Formula and calibration-table volume calculation support
+- [x] Raw telemetry retention
+- [x] Separate historical and current-state storage
+- [x] Backend-authoritative calculations
+- [x] Backend-authoritative alarm evaluation
+- [x] Alarm hysteresis
+- [x] Alarm lifecycle and deduplication
+- [x] Sensor offline detection
+- [x] Three-role RBAC
+- [x] Administrator-managed user accounts
+- [x] Temporary-password workflow
+- [x] Audit logging
+- [x] Docker Compose deployment
+- [x] Nginx reverse proxy
+
+**Architecture Status:**
+> **FROZEN FOR VERSION 1**
+
+---
+
+## 23. Environment and Configuration Contract
+
+Application secrets and environment-specific configuration must not be hardcoded in source code.
+
+Local development and production environments use environment variables. The repository may contain `.env.example`, but the real `.env` file must not be committed to Git.
+
+### Backend Configuration
+
+```env
+NODE_ENV=development
+PORT=3001
+
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/wma_tank
+
+JWT_ACCESS_SECRET=
+JWT_REFRESH_SECRET=
+JWT_ACCESS_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
+
+MQTT_URL=mqtt://localhost:1883
+MQTT_USERNAME=
+MQTT_PASSWORD=
+MQTT_BASE_TOPIC=company/+/tanks/+/telemetry
+
+SENSOR_OFFLINE_TIMEOUT_SECONDS=60
+```
+
+Actual credentials and cryptographic secrets must be supplied separately for each environment.
+
+### Frontend Configuration
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1
+NEXT_PUBLIC_WS_URL=http://localhost:3001
+```
+
+- Only values intended to be visible to the browser may use the `NEXT_PUBLIC_` prefix.
+- Database credentials, JWT secrets, MQTT credentials, and other backend secrets must **never** be exposed through frontend environment variables.
+
+### Database Configuration
+
+PostgreSQL must not be exposed directly to the public internet. The backend is the application interface to PostgreSQL. Database credentials are stored using environment configuration.
+
+### MQTT Configuration
+
+Development may use unencrypted local MQTT.
+
+Production MQTT must use:
+- client authentication
+- username/password or equivalent credentials
+- topic access control
+- restricted network exposure
+- TLS when supported by the deployment environment
+
+*ESP32 devices must not receive database or application JWT credentials.*
+
+### Configuration Validation
+
+The backend must validate required environment variables during startup. Missing critical configuration should cause startup to fail clearly rather than allowing the application to run in a partially configured state.
+
+### Git Security
+
+The following files or data must **not** be committed:
+- `.env`
+- database passwords
+- MQTT passwords
+- JWT secrets
+- production credentials
+- private keys
+
+`.env.example` contains variable names and safe example/default values only.

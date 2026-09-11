@@ -118,7 +118,6 @@ Internet access must not be required for normal local monitoring.
 
 The system uses a modular monolith architecture.
 
-```text
                     PHYSICAL SYSTEM
                           │
                           ▼

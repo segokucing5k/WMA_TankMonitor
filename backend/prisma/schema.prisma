@@ -1,0 +1,239 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  OPERATOR
+  SUPERVISOR
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model User {
+  id                 String     @id @default(uuid()) @db.Uuid
+  fullName           String     @map("full_name")
+  username           String     @unique
+  passwordHash       String     @map("password_hash")
+  role               UserRole
+  status             UserStatus @default(ACTIVE)
+  mustChangePassword Boolean    @default(true) @map("must_change_password")
+  lastLoginAt        DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  acknowledgedAlarms Alarm[]
+  auditLogs          AuditLog[]
+
+  @@map("users")
+}
+
+enum TankShapeType {
+  VERTICAL_CYLINDER
+  RECTANGULAR
+  HORIZONTAL_CYLINDER
+  CONICAL_BOTTOM
+  CUSTOM_GEOMETRY
+}
+
+enum CalculationMethod {
+  FORMULA
+  CALIBRATION_TABLE
+}
+
+enum SensorType {
+  WATER_LEVEL
+  DISTANCE_TO_SURFACE
+}
+
+model Tank {
+  id            String        @id @default(uuid()) @db.Uuid
+  tankCode      String        @unique @map("tank_code")
+  name          String
+  location      String?
+  shapeType     TankShapeType @map("shape_type")
+  capacityLiter Decimal       @map("capacity_liter") @db.Decimal(12, 3)
+  description   String?
+  isActive      Boolean       @default(true) @map("is_active")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  geometry       TankGeometry?
+  sensor         Sensor?
+  readings       TankReading[]
+  currentState   TankCurrentState?
+  alarmThreshold AlarmThreshold?
+  alarms         Alarm[]
+
+  @@map("tanks")
+}
+
+model TankGeometry {
+  id                String            @id @default(uuid()) @db.Uuid
+  tankId            String            @unique @map("tank_id") @db.Uuid
+  calculationMethod CalculationMethod @map("calculation_method")
+  parameters        Json
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tank Tank @relation(fields: [tankId], references: [id], onDelete: Cascade)
+
+  @@map("tank_geometries")
+}
+
+model Sensor {
+  id                   String     @id @default(uuid()) @db.Uuid
+  sensorCode           String     @unique @map("sensor_code")
+  tankId               String     @unique @map("tank_id") @db.Uuid
+  sensorType           SensorType @map("sensor_type")
+  installationHeightMm Decimal?   @map("installation_height_mm") @db.Decimal(10, 3)
+  calibrationOffsetMm  Decimal    @default(0) @map("calibration_offset_mm") @db.Decimal(10, 3)
+  isActive             Boolean    @default(true) @map("is_active")
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tank          Tank               @relation(fields: [tankId], references: [id], onDelete: Cascade)
+  readings      TankReading[]
+  currentStates TankCurrentState[]
+  alarms        Alarm[]
+
+  @@map("sensors")
+}
+
+enum TankStatus {
+  CRITICAL_HIGH
+  HIGH_WARNING
+  NORMAL
+  LOW_WARNING
+  CRITICAL_LOW
+}
+
+enum SensorStatus {
+  ONLINE
+  OFFLINE
+}
+
+model TankReading {
+  id              BigInt    @id @default(autoincrement())
+  tankId          String    @map("tank_id") @db.Uuid
+  sensorId        String    @map("sensor_id") @db.Uuid
+  rawValueMm      Decimal   @map("raw_value_mm") @db.Decimal(12, 3)
+  fluidHeightMm   Decimal   @map("fluid_height_mm") @db.Decimal(12, 3)
+  volumeLiter     Decimal   @map("volume_liter") @db.Decimal(14, 3)
+  levelPercentage Decimal   @map("level_percentage") @db.Decimal(6, 3)
+  sensorTimestamp DateTime? @map("sensor_timestamp") @db.Timestamptz(6)
+  receivedAt      DateTime  @default(now()) @map("received_at") @db.Timestamptz(6)
+
+  tank   Tank   @relation(fields: [tankId], references: [id], onDelete: Cascade)
+  sensor Sensor @relation(fields: [sensorId], references: [id], onDelete: Restrict)
+
+  @@index([tankId, receivedAt])
+  @@index([sensorId, receivedAt])
+  @@map("tank_readings")
+}
+
+model TankCurrentState {
+  tankId            String       @id @map("tank_id") @db.Uuid
+  sensorId          String       @map("sensor_id") @db.Uuid
+  rawValueMm        Decimal      @map("raw_value_mm") @db.Decimal(12, 3)
+  fluidHeightMm     Decimal      @map("fluid_height_mm") @db.Decimal(12, 3)
+  volumeLiter       Decimal      @map("volume_liter") @db.Decimal(14, 3)
+  levelPercentage   Decimal      @map("level_percentage") @db.Decimal(6, 3)
+  tankStatus        TankStatus   @map("tank_status")
+  sensorStatus      SensorStatus @map("sensor_status")
+  lastMeasurementAt DateTime?    @map("last_measurement_at") @db.Timestamptz(6)
+  lastReceivedAt    DateTime     @map("last_received_at") @db.Timestamptz(6)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tank   Tank   @relation(fields: [tankId], references: [id], onDelete: Cascade)
+  sensor Sensor @relation(fields: [sensorId], references: [id], onDelete: Restrict)
+
+  @@index([sensorStatus])
+  @@map("tank_current_states")
+}
+
+enum AlarmType {
+  CRITICAL_HIGH
+  HIGH_WARNING
+  LOW_WARNING
+  CRITICAL_LOW
+  SENSOR_OFFLINE
+}
+
+enum AlarmSeverity {
+  WARNING
+  CRITICAL
+}
+
+enum AlarmStatus {
+  ACTIVE
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+model AlarmThreshold {
+  id              String   @id @default(uuid()) @db.Uuid
+  tankId          String   @unique @map("tank_id") @db.Uuid
+  criticalHighPct Decimal  @map("critical_high_pct") @db.Decimal(6, 3)
+  highWarningPct  Decimal  @map("high_warning_pct") @db.Decimal(6, 3)
+  lowWarningPct   Decimal  @map("low_warning_pct") @db.Decimal(6, 3)
+  criticalLowPct  Decimal  @map("critical_low_pct") @db.Decimal(6, 3)
+  hysteresisPct   Decimal  @default(2) @map("hysteresis_pct") @db.Decimal(6, 3)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tank Tank @relation(fields: [tankId], references: [id], onDelete: Cascade)
+
+  @@map("alarm_thresholds")
+}
+
+model Alarm {
+  id               String        @id @default(uuid()) @db.Uuid
+  tankId           String        @map("tank_id") @db.Uuid
+  sensorId         String?       @map("sensor_id") @db.Uuid
+  type             AlarmType
+  severity         AlarmSeverity
+  status           AlarmStatus   @default(ACTIVE)
+  triggerValuePct  Decimal?      @map("trigger_value_pct") @db.Decimal(6, 3)
+  triggeredAt      DateTime      @default(now()) @map("triggered_at") @db.Timestamptz(6)
+  acknowledgedById String?       @map("acknowledged_by") @db.Uuid
+  acknowledgedAt   DateTime?     @map("acknowledged_at") @db.Timestamptz(6)
+  resolvedAt       DateTime?     @map("resolved_at") @db.Timestamptz(6)
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tank           Tank    @relation(fields: [tankId], references: [id], onDelete: Cascade)
+  sensor         Sensor? @relation(fields: [sensorId], references: [id], onDelete: SetNull)
+  acknowledgedBy User?   @relation(fields: [acknowledgedById], references: [id], onDelete: SetNull)
+
+  @@index([tankId, status])
+  @@index([status, severity])
+  @@index([triggeredAt])
+  @@map("alarms")
+}
+
+model AuditLog {
+  id           BigInt   @id @default(autoincrement())
+  userId       String?  @map("user_id") @db.Uuid
+  action       String
+  resourceType String   @map("resource_type")
+  resourceId   String?  @map("resource_id")
+  oldValue     Json?    @map("old_value")
+  newValue     Json?    @map("new_value")
+  ipAddress    String?  @map("ip_address")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([resourceType, resourceId])
+  @@map("audit_logs")
+}
